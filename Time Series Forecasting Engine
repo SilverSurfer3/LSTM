@@ -1,0 +1,137 @@
+
+#This model is designed to forecast future values based on a given time series data. 
+#It starts by preprocessing the data, including feature engineering techniques such as computing rolling statistics (mean, standard deviation), exponential moving average, 
+#and seasonal decomposition. Fourier Transforms are also applied to analyze frequency components. The data is then normalized and converted into sequences suitable for 
+#training a Long Short-Term Memory (LSTM) neural network. The LSTM model is constructed with multiple layers and trained on the input sequences using 
+#the mean squared error loss function and the Adam optimizer. Early stopping is employed to prevent overfitting during training. Finally, 
+#the trained model is used to make predictions for future values, which are then rescaled back to the original scale for visualization alongside the original data. 
+#Overall, this model aims to provide accurate forecasts for the future values of the given time series data.
+
+
+
+
+
+
+
+
+
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+from statsmodels.tsa.seasonal import seasonal_decompose
+from scipy.fftpack import fft
+
+# Given data
+data = [  
+1,1,1,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,0,0,1,1,0,1,0,0,0,1,0,0,1,0,1,1,1,0,1,0,1,1,1,0,1,1,1,0,1,1,1,0,0,0,1,1,0,0,1,0,0,1,0,0,1,0,0,1,1,0,0,0,0,0,0,0,0,1,0,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,1,1,0,1,1,0,0,0,1
+    
+    
+    
+    
+    
+    
+]
+
+# Create a DataFrame for easier feature engineering
+data_df = pd.DataFrame({'score': data})
+
+# Feature engineering
+data_df['previous_score'] = data_df['score'].shift(1)
+data_df['rolling_mean'] = data_df['score'].rolling(window=3).mean()
+data_df['rolling_std'] = data_df['score'].rolling(window=3).std()
+data_df['score_diff'] = data_df['score'].diff()
+
+# Rolling Mean
+data_df['rolling_mean'] = data_df['score'].rolling(window=3).mean()
+
+# Geometric Mean
+data_df['rolling_geo_mean'] = data_df['score'].rolling(window=3).apply(lambda x: np.exp(np.log(x).mean()))
+
+# Standard Deviation
+data_df['rolling_std'] = data_df['score'].rolling(window=3).std()
+
+# Exponential Moving Average (EMA)
+data_df['ema'] = data_df['score'].ewm(span=3, adjust=False).mean()
+
+# Seasonal Decomposition
+result = seasonal_decompose(data_df['score'], model='additive', period=7)  # Assuming a weekly seasonality
+data_df['trend'] = result.trend
+data_df['seasonal'] = result.seasonal
+data_df['residual'] = result.resid
+
+# Fourier Transforms
+fft_values = fft(np.array(data_df['score']))  # Convert to numpy array
+data_df['fft'] = np.abs(fft_values)
+
+# Convert data to numpy array
+data_array = np.array(data_df['score']).reshape(-1, 1)
+
+# Normalize the data
+scaler = MinMaxScaler(feature_range=(0, 1))
+data_scaled = scaler.fit_transform(data_array)
+
+# Create sequences for LSTM
+def create_sequences(data, seq_length):
+    sequences = []
+    for i in range(len(data) - seq_length):
+        sequence = data[i:i + seq_length]
+        sequences.append(sequence)
+    return np.array(sequences)
+
+# Set the sequence length (adjust as needed)
+sequence_length = 3
+
+# Create sequences for training
+sequences = create_sequences(data_scaled, sequence_length)
+
+# Split into features and target
+X = sequences[:, :-1]
+y = sequences[:, -1]
+
+# Reshape the data for LSTM input (samples, time steps, features)
+X = X.reshape((X.shape[0], X.shape[1], 1))
+
+# Build the LSTM model
+model = Sequential()
+model.add(LSTM(50, input_shape=(X.shape[1], X.shape[2]), return_sequences=True))
+model.add(Dropout(0.2))
+model.add(LSTM(50, return_sequences=True))
+model.add(Dropout(0.2))
+model.add(LSTM(50))
+model.add(Dropout(0.2))
+model.add(Dense(1))
+model.compile(optimizer=Adam(lr=0.001), loss='mse')
+
+# Early stopping to prevent overfitting
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+# Train the model
+model.fit(X, y, epochs=100, batch_size=4, callbacks=[early_stopping], verbose=1)
+
+# Set the number of days to forecast (adjust as needed)
+n_forecast = 1
+
+# Predict using the trained model
+forecast = model.predict(X[-n_forecast:].reshape((n_forecast, sequence_length-1, 1)))
+
+# Rescale the forecasted values
+forecast = scaler.inverse_transform(forecast)
+
+# Print tomorrow's forecasted value
+print("Tomorrow's Forecasted Value:", forecast.flatten()[0])
+
+# Plot the original data and the forecasted values
+plt.figure(figsize=(12, 6))
+plt.plot(data, label='Original Data')
+plt.plot(range(len(data), len(data) + n_forecast), forecast, 'ro', label='Forecasted Data')
+plt.xlabel('Time Steps')
+plt.ylabel('Value')
+plt.legend()
+plt.show()
